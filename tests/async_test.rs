@@ -565,6 +565,31 @@ mod asyncs {
         assert_eq!(stream.next().await, None);
     }
 
+    // A stream reuses one future for every item. Once an item came through a
+    // waiting signal, the next wait must not see that signal as still
+    // delivered and hand the same item out again.
+    #[tokio::test]
+    async fn stream_waits_again_after_a_wait() {
+        use futures::{stream::StreamExt, FutureExt};
+        let (s, r) = new::<String>(None);
+        let mut stream = r.stream();
+        let sender = tokio::spawn({
+            let s = s.clone();
+            async move {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                s.send("first".to_string()).await.unwrap();
+            }
+        });
+        assert_eq!(stream.next().await.unwrap(), "first");
+        sender.await.unwrap();
+        assert_eq!(stream.next().now_or_never(), None);
+        assert_eq!(stream.next().now_or_never(), None);
+        s.send("second".to_string()).await.unwrap();
+        assert_eq!(stream.next().await.unwrap(), "second");
+        drop(s);
+        assert_eq!(stream.next().await, None);
+    }
+
     async fn two_msg(size: usize) {
         let (s, r) = bounded_async::<u8>(size);
         tokio::spawn(async move {
