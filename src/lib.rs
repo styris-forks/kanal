@@ -8,6 +8,10 @@ pub(crate) mod internal;
 // loom's own mutex in that configuration (see internal.rs).
 #[cfg(any(not(feature = "std-mutex"), loom))]
 pub(crate) mod mutex;
+// Only the custom mutex is built on lock_api, and Cargo can't leave a
+// dependency out for a feature, so with std-mutex it's marked as used here
+#[cfg(all(feature = "std-mutex", not(loom)))]
+use lock_api as _;
 pub(crate) mod pointer;
 pub(crate) mod primitives;
 
