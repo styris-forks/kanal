@@ -279,13 +279,15 @@ impl<T> SyncSignal<T> {
                 break;
             }
         }
+        // A timed out wait_timeout leaves the signal starving already, and
+        // its counterpart will still unpark this thread once it finishes
         match self.state.compare_exchange(
             LOCKED,
             LOCKED_STARVATION,
             Ordering::Release,
             Ordering::Acquire,
         ) {
-            Ok(_) => loop {
+            Ok(_) | Err(LOCKED_STARVATION) => loop {
                 park();
                 let v = self.state.load(Ordering::Relaxed);
                 if likely(v > LOCKED_STARVATION) {
@@ -313,7 +315,7 @@ impl<T> SyncSignal<T> {
             Ordering::Release,
             Ordering::Acquire,
         ) {
-            Ok(_) => loop {
+            Ok(_) | Err(LOCKED_STARVATION) => loop {
                 park();
                 let v = self.state.load(Ordering::Relaxed);
                 if v > LOCKED_STARVATION {
@@ -615,5 +617,39 @@ impl<T> AsyncSignal<T> {
             }
             yield_now();
         }
+    }
+}
+
+#[cfg(all(test, not(loom)))]
+mod tests {
+    use core::mem::MaybeUninit;
+    use std::time::{Duration, Instant};
+
+    use super::SyncSignal;
+    use crate::pointer::KanalPtr;
+
+    struct Shared(*const SyncSignal<usize>);
+    unsafe impl Send for Shared {}
+
+    /// A timed wait that gave up just as its counterpart took the signal
+    /// leaves it starving. Waiting on after that has to wait for the
+    /// counterpart, however long it takes, instead of reporting a failure
+    /// while the counterpart is still moving the data.
+    #[test]
+    fn wait_after_timeout_waits_for_counterpart() {
+        let mut slot = MaybeUninit::<usize>::uninit();
+        let sig =
+            SyncSignal::new(KanalPtr::new_write_address_ptr(slot.as_mut_ptr()));
+        assert!(!sig.wait_timeout(Instant::now()));
+        let shared = Shared(&sig);
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                let shared = shared;
+                std::thread::sleep(Duration::from_millis(5));
+                unsafe { SyncSignal::write_data(shared.0, 7) };
+            });
+            assert!(sig.wait());
+        });
+        assert_eq!(unsafe { sig.assume_init() }, 7);
     }
 }
