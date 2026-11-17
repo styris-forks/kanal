@@ -590,6 +590,36 @@ mod asyncs {
         assert_eq!(stream.next().await, None);
     }
 
+    // A message delivered to a receive future that is then dropped, as one
+    // losing a select, goes on to the next waiting receiver rather than being
+    // lost or left in the queue while that receiver waits.
+    async fn dropped_receive_hands_on(cap: usize) {
+        use futures::FutureExt;
+        let (s, r) = bounded_async::<String>(cap);
+        let mut first = Box::pin(r.recv());
+        let mut second = Box::pin(r.recv());
+        assert!(first.as_mut().now_or_never().is_none());
+        assert!(second.as_mut().now_or_never().is_none());
+        s.send("only".to_string()).await.unwrap();
+        drop(first);
+        let got = tokio::time::timeout(Duration::from_secs(1), second).await;
+        assert_eq!(
+            got.expect("waiting receiver was not handed the message")
+                .unwrap(),
+            "only"
+        );
+    }
+
+    #[tokio::test]
+    async fn dropped_receive_hands_on_zero() {
+        dropped_receive_hands_on(0).await;
+    }
+
+    #[tokio::test]
+    async fn dropped_receive_hands_on_one() {
+        dropped_receive_hands_on(1).await;
+    }
+
     async fn two_msg(size: usize) {
         let (s, r) = bounded_async::<u8>(size);
         tokio::spawn(async move {

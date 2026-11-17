@@ -253,28 +253,24 @@ impl<T> Drop for ReceiveFuture<'_, T> {
             // either it is unregistered or a sender got signal ownership,
             // receiver should wait until the response
             if !state.is_unregistered() && self.sig.blocking_wait() {
-                // got ownership of data that is not going to be used ever
-                // again, so drop it this is actually a bug in
-                // user code but we should handle it gracefully
-                // and we warn user in debug mode
-                // SAFETY: data is not moved it's safe to drop it or put it back
-                // to the channel queue
-                unsafe {
-                    if self.internal.capacity() == 0 {
-                        #[cfg(debug_assertions)]
-                        println!(
-                            "warning: ReceiveFuture dropped while send operation is in progress"
-                        );
-                        self.sig.drop_data();
-                    } else {
-                        // fallback: push it back to the front of the channel
-                        // queue to avoid losing it; this may transiently
-                        // exceed the channel capacity by one element, which
-                        // is preferable to dropping delivered data
-                        acquire_internal(self.internal)
-                            .queue
-                            .push_front(self.sig.assume_init())
-                    }
+                // got ownership of data this future will never return, as when
+                // it loses a select, so it goes on to the next waiting
+                // receiver, or back to the front of the queue
+                // SAFETY: data is delivered and not moved out yet
+                let data = unsafe { self.sig.assume_init() };
+                let mut internal = acquire_internal(self.internal);
+                if let Some(next) = internal.next_recv() {
+                    drop(internal);
+                    // SAFETY: it's safe to send to owned signal once
+                    unsafe { next.send(data) }
+                } else if self.internal.capacity() > 0 {
+                    // this may transiently exceed the channel capacity by one
+                    // element, which is preferable to dropping delivered data
+                    internal.queue.push_front(data);
+                } else {
+                    // a zero capacity channel has nowhere to keep it
+                    drop(internal);
+                    drop(data);
                 }
             }
         }
