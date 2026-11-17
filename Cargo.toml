@@ -12,10 +12,10 @@ license = "MIT"
 readme = "README.md"
 
 [dependencies]
-branches = "0.4"
+branches = "0.5"
 cacheguard = "0.1"
 futures-core = { version = "0.3", optional = true }
-lock_api = "0.4"
+lock_api = "0.5"
 
 [dev-dependencies]
 anyhow = "1.0"

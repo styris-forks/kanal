@@ -60,20 +60,26 @@ unsafe impl RawMutex for RawMutexLock {
     const INIT: RawMutexLock = RawMutexLock {
         locked: AtomicBool::new(false),
     };
-    type GuardMarker = GuardSend;
+    type Guard = GuardSend;
     #[inline(always)]
-    fn lock(&self) {
-        RawMutexLock::lock(self)
+    fn lock(&self) -> GuardSend {
+        RawMutexLock::lock(self);
+        GuardSend::new()
     }
 
     #[inline(always)]
-    fn try_lock(&self) -> bool {
-        RawMutexLock::try_lock(self)
+    fn try_lock(&self) -> Option<GuardSend> {
+        RawMutexLock::try_lock(self).then(GuardSend::new)
     }
 
     #[inline(always)]
-    unsafe fn unlock(&self) {
+    unsafe fn unlock(&self, _guard: GuardSend) {
         RawMutexLock::unlock(self)
+    }
+
+    #[inline(always)]
+    fn is_locked(&self) -> bool {
+        self.locked.load(Ordering::Relaxed)
     }
 }
 #[cfg(not(loom))]
